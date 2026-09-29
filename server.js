@@ -47,7 +47,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'OPTIONS') return send(res, 204, {});
     const u = new URL(req.url, 'http://x');
-    if (u.pathname === '/healthz' || u.pathname === '/') return send(res, 200, { ok: true, service: 'hr-sync', ts: Date.now() });
+    if (u.pathname === '/healthz' || u.pathname === '/') return send(res, 200, { ok: true, service: 'hr-sync', version: '1.1.0', recovery: 'email', mail: !!(SMTP.host && SMTP.user), ts: Date.now() });
     const ip = ipOf(req); if (blocked(ip)) return send(res, 429, { ok: false, error: 'too-many-attempts' });
     if (!authed(req)) { noteFail(ip); return send(res, 401, { ok: false, error: 'unauthorized' }); }
     /* ---- استرداد كلمة مرور المدير بالإيميل ---- */
