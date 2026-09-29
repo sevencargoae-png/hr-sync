@@ -5,7 +5,7 @@ const http = require('http');
 const { Pool } = require('pg');
 const PORT = process.env.PORT || 10000;
 const TOKEN = process.env.COMPANY_TOKEN || '';
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 4 });
+const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.PGSSL === '1' ? { rejectUnauthorized: false } : false, max: 4 });
 
 async function init() {
   await pool.query(`CREATE TABLE IF NOT EXISTS hr_store (
