@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 10000;
 const TOKEN = process.env.COMPANY_TOKEN || '';
 const crypto = require('crypto');
 const { MODULES, PLANS, resolveModules } = require('./plans');
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const SERVER_SECRET = process.env.SERVER_SECRET || TOKEN; // لتشفير مفتاح الاسترداد أثناء التخزين
 const SMTP = { host: process.env.SMTP_HOST || '', port: +(process.env.SMTP_PORT || 465), user: process.env.SMTP_USER || '', pass: process.env.SMTP_PASS || '', from: process.env.SMTP_FROM || process.env.SMTP_USER || '' };
 const TEST_MODE = process.env.RECOVERY_TEST_MODE === '1'; // للاختبار فقط: يعيد الكود في الاستجابة بدل الإرسال
@@ -64,6 +64,7 @@ async function init() {
   await pool.query(`CREATE TABLE IF NOT EXISTS hr_codes (code text PRIMARY KEY, name text, plan text, modules jsonb, max_uses integer NOT NULL DEFAULT 1, valid_days integer, expires date, revoked boolean NOT NULL DEFAULT false, created_at timestamptz DEFAULT now())`);
   await pool.query(`CREATE TABLE IF NOT EXISTS hr_activations (code text NOT NULL, machine text NOT NULL, name text, serial text, lic_id text, lic_expires date, at timestamptz DEFAULT now(), last_check timestamptz, PRIMARY KEY (code, machine))`);
   await pool.query(`CREATE TABLE IF NOT EXISTS hr_signups (id text PRIMARY KEY, kind text NOT NULL DEFAULT 'trial', machine text NOT NULL, company text, person text, activity text, phone text, username text, email text, status text NOT NULL DEFAULT 'pending', approve_code text, tries integer DEFAULT 0, terms text, terms_at timestamptz, note text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS hr_devices (machine text PRIMARY KEY, host text, app_version text, os text, lic_state text, lic_name text, lic_plan text, lic_expires text, lic_code text, company text, trial_start text, status text NOT NULL DEFAULT 'active', note text, ip text, seen_count integer NOT NULL DEFAULT 0, first_seen timestamptz DEFAULT now(), last_seen timestamptz DEFAULT now(), status_at timestamptz, status_by text)`);
   console.log('hr_store ready');
 }
 
@@ -109,6 +110,18 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: !!r.rows[0] });
     }
     /* ---- نقاط الترخيص العامة (بدون رمز الشركة؛ محمية بالكود نفسه + حدّ المحاولات) ---- */
+    /* ---- نبضة الجهاز: كل نسخة مثبّتة تُبلّغ عن نفسها (بدون رمز الشركة) وتستلم حالتها: active / disabled / killed ---- */
+    if (u.pathname === '/device/ping' && req.method === 'POST') {
+      const b = JSON.parse((await readBody(req)).toString() || '{}'); const machine = String(b.machine || '').trim().toUpperCase();
+      if (!MACHINE_RE.test(machine)) { noteFail(ip); return send(res, 400, { ok: false, why: 'bad-machine' }); }
+      const rl = signupRate.get('ping:' + machine) || { n: 0, first: Date.now() }; if (Date.now() - rl.first > 3600000) { rl.n = 0; rl.first = Date.now(); } if (++rl.n > 60) return send(res, 429, { ok: false, why: 'busy' }); signupRate.set('ping:' + machine, rl);
+      const clip = (v, n) => (v === undefined || v === null) ? null : String(v).slice(0, n); const lic = b.lic && typeof b.lic === 'object' ? b.lic : {};
+      const { rows } = await pool.query(`INSERT INTO hr_devices (machine, host, app_version, os, lic_state, lic_name, lic_plan, lic_expires, lic_code, company, trial_start, ip, seen_count, first_seen, last_seen)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,1,now(),now())
+        ON CONFLICT (machine) DO UPDATE SET host=COALESCE($2,hr_devices.host), app_version=$3, os=COALESCE($4,hr_devices.os), lic_state=$5, lic_name=$6, lic_plan=$7, lic_expires=$8, lic_code=COALESCE($9,hr_devices.lic_code), company=COALESCE($10,hr_devices.company), trial_start=COALESCE($11,hr_devices.trial_start), ip=$12, seen_count=hr_devices.seen_count+1, last_seen=now()
+        RETURNING status, note`, [machine, clip(b.host, 80), clip(b.version, 20), clip(b.os, 60), clip(lic.state, 20), clip(lic.name, 120), clip(lic.plan, 30), clip(lic.expires, 10), clip(lic.code, 20), clip(b.company, 120), clip(b.trialStart, 10), ip.slice(0, 60)]);
+      return send(res, 200, { ok: true, status: rows[0].status || 'active', message: rows[0].note || null, ts: Date.now() });
+    }
     if (u.pathname === '/license/plans' && req.method === 'GET') return send(res, 200, { ok: true, modules: MODULES, plans: PLANS });
     if (u.pathname === '/license/activate' && req.method === 'POST') {
       if (!SIGN_KEY) return send(res, 503, { ok: false, why: 'not-configured' });
@@ -145,10 +158,24 @@ const server = http.createServer(async (req, res) => {
     }
     if (!authed(req)) { noteFail(ip); return send(res, 401, { ok: false, error: 'unauthorized' }); }
     /* ---- إدارة الأكواد (المالك فقط: رمز الشركة + توقيع المالك) ---- */
-    if (['/license/newcode', '/license/codes', '/license/revoke', '/signup/list', '/signup/approve', '/signup/reject', '/signup/done'].includes(u.pathname)) {
+    if (['/license/newcode', '/license/codes', '/license/revoke', '/signup/list', '/signup/approve', '/signup/reject', '/signup/done', '/admin/devices', '/admin/device/status'].includes(u.pathname)) {
       const bodyText = req.method === 'POST' ? (await readBody(req)).toString() : '';
       if (!ownerOk(req, u.pathname, bodyText)) { noteFail(ip); return send(res, 403, { ok: false, why: 'owner-only' }); }
       const b = bodyText ? JSON.parse(bodyText) : {};
+      if (u.pathname === '/admin/devices') {
+        const { rows } = await pool.query(`SELECT d.*,
+          COALESCE((SELECT json_agg(json_build_object('code', a.code, 'name', a.name, 'at', a.at, 'last_check', a.last_check, 'lic_expires', a.lic_expires, 'plan', c.plan, 'code_name', c.name, 'revoked', c.revoked) ORDER BY a.at) FROM hr_activations a LEFT JOIN hr_codes c ON c.code=a.code WHERE a.machine=d.machine), '[]'::json) AS activations,
+          COALESCE((SELECT json_agg(json_build_object('id', s.id, 'kind', s.kind, 'company', s.company, 'person', s.person, 'phone', s.phone, 'email', s.email, 'status', s.status, 'note', s.note, 'created_at', s.created_at, 'updated_at', s.updated_at) ORDER BY s.created_at DESC) FROM hr_signups s WHERE s.machine=d.machine), '[]'::json) AS signups
+          FROM hr_devices d ORDER BY d.last_seen DESC LIMIT 1000`);
+        const orphans = (await pool.query(`SELECT a.machine, a.name, a.code, a.at, a.lic_expires FROM hr_activations a WHERE NOT EXISTS (SELECT 1 FROM hr_devices d WHERE d.machine=a.machine) ORDER BY a.at DESC LIMIT 300`)).rows;
+        return send(res, 200, { ok: true, devices: rows, orphans, ts: Date.now() });
+      }
+      if (u.pathname === '/admin/device/status') {
+        const machine = String(b.machine || '').trim().toUpperCase(); const status = ['active', 'disabled', 'killed'].includes(b.status) ? b.status : null;
+        if (!MACHINE_RE.test(machine) || !status) return send(res, 200, { ok: false, why: 'bad-payload' });
+        const r = await pool.query(`UPDATE hr_devices SET status=$2, note=$3, status_at=now(), status_by='owner' WHERE machine=$1 RETURNING machine`, [machine, status, String(b.note || '').slice(0, 300) || null]);
+        return send(res, 200, r.rows[0] ? { ok: true, machine, status } : { ok: false, why: 'not-found' });
+      }
       if (u.pathname === '/signup/list') { const { rows } = await pool.query('SELECT id, kind, machine, company, person, activity, phone, username, email, status, terms, terms_at, note, created_at, updated_at FROM hr_signups ORDER BY created_at DESC LIMIT 300'); return send(res, 200, { ok: true, items: rows, pending: rows.filter(x => x.status === 'pending').length }); }
       if (u.pathname === '/signup/approve') {
         const id = String(b.id || ''); const code = genCode().replace(/-/g, '').slice(0, 6);
