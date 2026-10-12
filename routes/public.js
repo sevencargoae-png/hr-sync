@@ -21,7 +21,8 @@ function handle(u, req, res, ip) {
 }
 
 async function signupRequest(req, res, ip) {
-  const b = JSON.parse((await h.readBody(req, '/signup/request')).toString() || '{}');
+  const b = h.parseJSON(await h.readBody(req, '/signup/request'));
+  if (!b) return h.send(res, 400, { ok: false, why: 'bad-json' });
   const machine = String(b.machine || '').trim().toUpperCase();
   const kind = b.kind === 'purchase' ? 'purchase' : 'trial';
   if (!h.MACHINE_RE.test(machine) || h.clip(b.company, 120).length < 2 || h.clip(b.person, 120).length < 2 || h.clip(b.phone, 40).length < 5) {
@@ -45,14 +46,16 @@ async function signupRequest(req, res, ip) {
 }
 
 async function signupStatus(req, res, ip) {
-  const b = JSON.parse((await h.readBody(req, '/signup/status')).toString() || '{}');
+  const b = h.parseJSON(await h.readBody(req, '/signup/status'));
+  if (!b) return h.send(res, 400, { ok: false, why: 'bad-json' });
   const r = (await pool.query('SELECT status FROM hr_signups WHERE id=$1 AND machine=$2', [String(b.id || ''), String(b.machine || '').toUpperCase()])).rows[0];
   if (!r) { h.noteFail(ip); return h.send(res, 200, { ok: false, why: 'invalid' }); }
   return h.send(res, 200, { ok: true, status: r.status });
 }
 
 async function signupVerify(req, res, ip) {
-  const b = JSON.parse((await h.readBody(req, '/signup/verify')).toString() || '{}');
+  const b = h.parseJSON(await h.readBody(req, '/signup/verify'));
+  if (!b) return h.send(res, 400, { ok: false, why: 'bad-json' });
   const code = String(b.code || '').trim().toUpperCase().replace(/\s/g, '');
   const r = (await pool.query('SELECT * FROM hr_signups WHERE id=$1 AND machine=$2', [String(b.id || ''), String(b.machine || '').toUpperCase()])).rows[0];
   if (!r || r.status === 'rejected') { h.noteFail(ip); return h.send(res, 200, { ok: false, why: r ? 'rejected' : 'invalid' }); }
@@ -68,7 +71,8 @@ async function signupVerify(req, res, ip) {
 }
 
 async function signupTerms(req, res) {
-  const b = JSON.parse((await h.readBody(req, '/signup/terms')).toString() || '{}');
+  const b = h.parseJSON(await h.readBody(req, '/signup/terms'));
+  if (!b) return h.send(res, 400, { ok: false, why: 'bad-json' });
   const t = b.accepted ? 'accepted' : 'rejected';
   const r = await pool.query(`UPDATE hr_signups SET terms=$3, terms_at=now(), updated_at=now() WHERE id=$1 AND machine=$2 RETURNING id`,
     [String(b.id || ''), String(b.machine || '').toUpperCase(), t]);
@@ -76,7 +80,8 @@ async function signupTerms(req, res) {
 }
 
 async function devicePing(req, res, ip) {
-  const b = JSON.parse((await h.readBody(req, '/device/ping')).toString() || '{}');
+  const b = h.parseJSON(await h.readBody(req, '/device/ping'));
+  if (!b) return h.send(res, 400, { ok: false, why: 'bad-json' });
   const machine = String(b.machine || '').trim().toUpperCase();
   if (!h.MACHINE_RE.test(machine)) { h.noteFail(ip); return h.send(res, 400, { ok: false, why: 'bad-machine' }); }
   const rl = h.signupRate.get('ping:' + machine) || { n: 0, first: Date.now() };
@@ -96,7 +101,8 @@ async function devicePing(req, res, ip) {
 
 async function licenseActivate(req, res, ip) {
   if (!h.SIGN_KEY) return h.send(res, 503, { ok: false, why: 'not-configured' });
-  const b = JSON.parse((await h.readBody(req, '/license/activate')).toString() || '{}');
+  const b = h.parseJSON(await h.readBody(req, '/license/activate'));
+  if (!b) return h.send(res, 400, { ok: false, why: 'bad-json' });
   const code = String(b.code || '').trim().toUpperCase();
   const machine = String(b.machine || '').trim().toUpperCase();
   if (!/^[A-Z2-9]{4}(-[A-Z2-9]{4}){2}$/.test(code) || !h.MACHINE_RE.test(machine)) { h.noteFail(ip); return h.send(res, 200, { ok: false, why: 'invalid' }); }
@@ -133,7 +139,8 @@ async function licenseActivate(req, res, ip) {
 }
 
 async function licenseCheck(req, res, ip) {
-  const b = JSON.parse((await h.readBody(req, '/license/check')).toString() || '{}');
+  const b = h.parseJSON(await h.readBody(req, '/license/check'));
+  if (!b) return h.send(res, 400, { ok: false, why: 'bad-json' });
   const code = String(b.code || '').trim().toUpperCase();
   const machine = String(b.machine || '').trim().toUpperCase();
   if (!/^[A-Z2-9]{4}(-[A-Z2-9]{4}){2}$/.test(code) || !h.MACHINE_RE.test(machine)) { h.noteFail(ip); return h.send(res, 200, { ok: false, why: 'invalid' }); }

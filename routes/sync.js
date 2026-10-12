@@ -7,7 +7,8 @@ const h = require('../lib/helpers');
 async function handle(u, req, res, ip) {
   /* ---- استرداد كلمة مرور المدير بالإيميل ---- */
   if (u.pathname === '/recovery/enroll' && req.method === 'POST') {
-    const b = JSON.parse((await h.readBody(req, '/recovery/enroll')).toString() || '{}');
+    const b = h.parseJSON(await h.readBody(req, '/recovery/enroll'));
+    if (!b) return h.send(res, 400, { ok: false, error: 'bad-json' });
     const email = String(b.email || '').trim().toLowerCase();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || typeof b.escrow !== 'string' || b.escrow.length < 20)
       return h.send(res, 400, { ok: false, error: 'bad-payload' });
@@ -23,7 +24,8 @@ async function handle(u, req, res, ip) {
   }
 
   if (u.pathname === '/recovery/request' && req.method === 'POST') {
-    const b = JSON.parse((await h.readBody(req, '/recovery/request')).toString() || '{}');
+    const b = h.parseJSON(await h.readBody(req, '/recovery/request'));
+    if (!b) return h.send(res, 400, { ok: false, error: 'bad-json' });
     const email = String(b.email || '').trim().toLowerCase();
     const { rows } = await pool.query(`SELECT email FROM hr_recovery WHERE id='admin'`);
     if (!rows[0] || rows[0].email !== email) { h.noteFail(ip); return h.send(res, 200, { ok: true, sent: true }); }
@@ -37,7 +39,8 @@ async function handle(u, req, res, ip) {
   }
 
   if (u.pathname === '/recovery/verify' && req.method === 'POST') {
-    const b = JSON.parse((await h.readBody(req, '/recovery/verify')).toString() || '{}');
+    const b = h.parseJSON(await h.readBody(req, '/recovery/verify'));
+    if (!b) return h.send(res, 400, { ok: false, error: 'bad-json' });
     const email = String(b.email || '').trim().toLowerCase();
     const code = String(b.code || '').trim();
     const { rows } = await pool.query(`SELECT * FROM hr_recovery WHERE id='admin'`);
@@ -62,7 +65,8 @@ async function handle(u, req, res, ip) {
   }
 
   if (u.pathname === '/sync/push' && req.method === 'POST') {
-    const body = JSON.parse((await h.readBody(req, '/sync/push')).toString() || '{}');
+    const body = h.parseJSON(await h.readBody(req, '/sync/push'));
+    if (!body) return h.send(res, 400, { ok: false, error: 'bad-json' });
     const { expectedVersion, meta, blob, by } = body;
     if (typeof blob !== 'string' || !meta) return h.send(res, 400, { ok: false, error: 'bad-payload' });
     const client = await pool.connect();
@@ -84,7 +88,8 @@ async function handle(u, req, res, ip) {
   }
 
   if (u.pathname === '/sync/meta' && req.method === 'POST') {
-    const body = JSON.parse((await h.readBody(req, '/sync/meta')).toString() || '{}');
+    const body = h.parseJSON(await h.readBody(req, '/sync/meta'));
+    if (!body) return h.send(res, 400, { ok: false, error: 'bad-json' });
     if (!body.meta) return h.send(res, 400, { ok: false, error: 'bad-payload' });
     const { rows } = await pool.query('UPDATE hr_store SET meta=$1, version=version+1, updated_at=now(), updated_by=$2 WHERE id=$3 RETURNING version',
       [body.meta, String(body.by || '').slice(0, 80), 'company']);

@@ -13,7 +13,8 @@ async function handle(u, req, res, ip) {
 
   const bodyText = (await h.readBody(req, u.pathname)).toString();
   if (!h.ownerOk(req, u.pathname, bodyText)) { h.noteFail(ip); return h.send(res, 403, { ok: false, why: 'owner-only' }); }
-  const b = bodyText ? JSON.parse(bodyText) : {};
+  let b = {};
+  if (bodyText) { b = h.parseJSON(Buffer.from(bodyText)); if (!b) return h.send(res, 400, { ok: false, why: 'bad-json' }); }
 
   if (u.pathname === '/admin/devices') {
     const { rows } = await pool.query(`SELECT d.*,

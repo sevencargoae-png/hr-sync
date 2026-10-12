@@ -58,3 +58,15 @@ const server = http.createServer(async (req, res) => {
 init()
   .then(() => server.listen(PORT, () => console.log('hr-sync on', PORT)))
   .catch(e => { console.error('init failed', e); process.exit(1); });
+
+// ---------- graceful shutdown ----------
+function shutdown(signal) {
+  console.log(`${signal} received — shutting down`);
+  server.close(async () => {
+    try { const { pool } = require('./lib/db'); await pool.end(); } catch (_) { /* ignore */ }
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 8000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
