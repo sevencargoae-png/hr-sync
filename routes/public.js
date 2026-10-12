@@ -28,6 +28,8 @@ async function signupRequest(req, res, ip) {
   if (!h.MACHINE_RE.test(machine) || h.clip(b.company, 120).length < 2 || h.clip(b.person, 120).length < 2 || h.clip(b.phone, 40).length < 5) {
     h.noteFail(ip); return h.send(res, 400, { ok: false, why: 'bad-payload' });
   }
+  // Prevent unbounded growth of signupRate map
+  if (h.signupRate.size > 10000) { const it = h.signupRate.keys(); for (let i = 0; i < 1000; i++) { const k = it.next().value; if (k) h.signupRate.delete(k); } }
   const rl = h.signupRate.get(ip) || { n: 0, first: Date.now() };
   if (Date.now() - rl.first > 3600000) { rl.n = 0; rl.first = Date.now(); }
   if (++rl.n > 8) return h.send(res, 429, { ok: false, why: 'busy' });
@@ -85,6 +87,7 @@ async function devicePing(req, res, ip) {
   if (!b) return h.send(res, 400, { ok: false, why: 'bad-json' });
   const machine = String(b.machine || '').trim().toUpperCase();
   if (!h.MACHINE_RE.test(machine)) { h.noteFail(ip); return h.send(res, 400, { ok: false, why: 'bad-machine' }); }
+  if (h.signupRate.size > 10000) { const it = h.signupRate.keys(); for (let i = 0; i < 1000; i++) { const k = it.next().value; if (k) h.signupRate.delete(k); } }
   const rl = h.signupRate.get('ping:' + machine) || { n: 0, first: Date.now() };
   if (Date.now() - rl.first > 3600000) { rl.n = 0; rl.first = Date.now(); }
   if (++rl.n > 60) return h.send(res, 429, { ok: false, why: 'busy' });
