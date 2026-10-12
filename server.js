@@ -22,12 +22,7 @@ const server = http.createServer(async (req, res) => {
 
     // Health check
     if (u.pathname === '/healthz' || u.pathname === '/') {
-      return h.send(res, 200, {
-        ok: true, service: 'hr-sync', version: VERSION,
-        license: !!h.SIGN_KEY, recovery: 'email',
-        mail: !!(process.env.SMTP_HOST && process.env.SMTP_USER),
-        ts: Date.now(),
-      });
+      return h.send(res, 200, { ok: true, service: 'hr-sync', ts: Date.now() });
     }
 
     const ip = h.ipOf(req);

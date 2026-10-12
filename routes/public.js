@@ -61,7 +61,8 @@ async function signupVerify(req, res, ip) {
   if (!r || r.status === 'rejected') { h.noteFail(ip); return h.send(res, 200, { ok: false, why: r ? 'rejected' : 'invalid' }); }
   if (r.status === 'pending') return h.send(res, 200, { ok: false, why: 'pending' });
   if (r.tries >= 8) return h.send(res, 200, { ok: false, why: 'locked' });
-  if (!r.approve_code || code !== r.approve_code) {
+  const codeMatch = r.approve_code && code.length === r.approve_code.length && crypto.timingSafeEqual(Buffer.from(code), Buffer.from(r.approve_code));
+  if (!r.approve_code || !codeMatch) {
     await pool.query('UPDATE hr_signups SET tries=tries+1 WHERE id=$1', [r.id]);
     h.noteFail(ip);
     return h.send(res, 200, { ok: false, why: 'code' });

@@ -30,7 +30,7 @@ async function handle(u, req, res, ip) {
     const { rows } = await pool.query(`SELECT email FROM hr_recovery WHERE id='admin'`);
     if (!rows[0] || rows[0].email !== email) { h.noteFail(ip); return h.send(res, 200, { ok: true, sent: true }); }
     const code = String(crypto.randomInt(100000, 999999));
-    const hash = crypto.createHash('sha256').update(code + h.SERVER_SECRET).digest('hex');
+    const hash = crypto.createHmac('sha256', h.SERVER_SECRET).update(code).digest('hex');
     await pool.query(`UPDATE hr_recovery SET code_hash=$1, code_exp=now() + interval '10 minutes', tries=0 WHERE id='admin'`, [hash]);
     try {
       await h.sendMail(email, 'رمز استرداد كلمة مرور منصة شؤون الموظفين', `رمز الاسترداد: ${code}\nصالح لمدة 10 دقائق. إن لم تطلب هذا، تجاهل الرسالة.`);
@@ -48,8 +48,9 @@ async function handle(u, req, res, ip) {
     if (!r || r.email !== email || !r.code_hash || !r.code_exp || new Date(r.code_exp) < new Date() || r.tries >= 5) {
       h.noteFail(ip); return h.send(res, 200, { ok: false, why: 'invalid' });
     }
-    const hash = crypto.createHash('sha256').update(code + h.SERVER_SECRET).digest('hex');
-    if (hash !== r.code_hash) {
+    const hash = crypto.createHmac('sha256', h.SERVER_SECRET).update(code).digest('hex');
+    const hashMatch = hash.length === r.code_hash.length && crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(r.code_hash));
+    if (!hashMatch) {
       await pool.query(`UPDATE hr_recovery SET tries=tries+1 WHERE id='admin'`);
       h.noteFail(ip); return h.send(res, 200, { ok: false, why: 'invalid' });
     }
