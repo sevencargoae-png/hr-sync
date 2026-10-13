@@ -45,6 +45,7 @@ const server = http.createServer(async (req, res) => {
 
     return h.send(res, 404, { ok: false, error: 'not-found' });
   } catch (e) {
+    if (e && e.message === 'too-big') return h.send(res, 413, { ok: false, error: 'too-big' });
     console.error(e.message);
     return h.send(res, 500, { ok: false, error: 'server' });
   }
