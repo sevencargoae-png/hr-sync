@@ -6,5 +6,6 @@ COPY server.js plans.js ./
 COPY lib/ ./lib/
 COPY routes/ ./routes/
 ENV PORT=3000
+USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
