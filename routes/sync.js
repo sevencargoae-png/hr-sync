@@ -4,6 +4,13 @@ const crypto = require('crypto');
 const { pool } = require('../lib/db');
 const h = require('../lib/helpers');
 
+/* نسخة احتياطية من الحالة الحالية قبل أي استبدال، مع الاحتفاظ بآخر 10 فقط */
+async function saveHistory(db) {
+  await db.query(`INSERT INTO hr_store_history (version, meta, blob, updated_at, updated_by)
+    SELECT version, meta, blob, updated_at, updated_by FROM hr_store WHERE id='company' AND blob IS NOT NULL`);
+  await db.query(`DELETE FROM hr_store_history WHERE hid NOT IN (SELECT hid FROM hr_store_history ORDER BY hid DESC LIMIT 10)`);
+}
+
 async function handle(u, req, res, ip) {
   /* ---- استرداد كلمة مرور المدير بالإيميل ---- */
   if (u.pathname === '/recovery/enroll' && req.method === 'POST') {
@@ -27,6 +34,7 @@ async function handle(u, req, res, ip) {
     const b = h.parseJSON(await h.readBody(req, '/recovery/request'));
     if (!b) return h.send(res, 400, { ok: false, error: 'bad-json' });
     const email = String(b.email || '').trim().toLowerCase();
+    if (h.limited('recovery:all', 5, 3600000) || h.limited('recovery:' + ip, 3, 900000)) return h.send(res, 429, { ok: false, error: 'busy' });
     const { rows } = await pool.query(`SELECT email FROM hr_recovery WHERE id='admin'`);
     if (!rows[0] || rows[0].email !== email) { h.noteFail(ip); return h.send(res, 200, { ok: true, sent: true }); }
     const code = String(crypto.randomInt(100000, 999999));
@@ -80,6 +88,7 @@ async function handle(u, req, res, ip) {
         return h.send(res, 409, { ok: false, conflict: true, version: curV });
       }
       const nv = curV + 1;
+      await saveHistory(client);
       await client.query('UPDATE hr_store SET meta=$1, blob=$2, version=$3, updated_at=now(), updated_by=$4 WHERE id=$5',
         [meta, blob, nv, String(by || '').slice(0, 80), 'company']);
       await client.query('COMMIT');
@@ -92,6 +101,7 @@ async function handle(u, req, res, ip) {
     const body = h.parseJSON(await h.readBody(req, '/sync/meta'));
     if (!body) return h.send(res, 400, { ok: false, error: 'bad-json' });
     if (!body.meta) return h.send(res, 400, { ok: false, error: 'bad-payload' });
+    await saveHistory(pool);
     const { rows } = await pool.query('UPDATE hr_store SET meta=$1, version=version+1, updated_at=now(), updated_by=$2 WHERE id=$3 RETURNING version',
       [body.meta, String(body.by || '').slice(0, 80), 'company']);
     return h.send(res, 200, { ok: true, version: rows[0].version });
